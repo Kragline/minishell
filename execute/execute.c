@@ -1,0 +1,96 @@
+/* ************************************************************************** */
+/*																			  */
+/*														  :::	   ::::::::   */
+/*	 execute.c											:+:		 :+:	:+:   */
+/*													  +:+ +:+		  +:+	  */
+/*	 By: armarake <marvin@42.fr>					+#+  +:+	   +#+		  */
+/*												  +#+#+#+#+#+	+#+			  */
+/*	 Created: 2025/05/12 15:21:29 by nasargsy		   #+#	  #+#			  */
+/*	 Updated: 2025/06/06 16:06:15 by nasargsy		  ###	########.fr		  */
+/*																			  */
+/* ************************************************************************** */
+
+#include "execute.h"
+
+static void	do_redirections(t_tokens **tokens, t_hash_table *env, t_stat *stat)
+{
+	t_tokens	*current;
+	t_tokens	*executable;
+	int			i;
+
+	i = 0;
+	current = *tokens;
+	executable = find_executable(current);
+	while (current && current->type != NEWL)
+	{
+		if (current->type == INPUT || current->type == HERE_DOC)
+		{
+			if (handle_input_redir(&current, &executable, env, stat))
+				continue ;
+		}
+		else if (current->type == OUTPUT || current->type == APPEND)
+		{
+			if (handle_output_redir(&current, &executable, stat))
+				continue ;
+		}
+		else if (current->type == PIPE)
+			handle_pipe_redir(&current, &executable, stat->pipe_fds, &i);
+		current = current->next;
+	}
+}
+
+static void	error_code_checks(t_tokens *tokens, t_stat *stat_struct)
+{
+	if ((tokens->type == COMMAND || tokens->type == BUILTIN)
+		&& !tokens->execute)
+		stat_struct->stat = 1;
+	if ((tokens->type == COMMAND || tokens->type == BUILTIN)
+		&& tokens->sigint_heredoc && tokens->input == STDIN_FILENO)
+		stat_struct->stat = 130;
+}
+
+static void	execute_all(t_tokens *tokens, t_hash_table *env,
+			t_stat *stat_struct)
+{
+	signal(SIGINT, &sig_handle_exec);
+	signal(SIGQUIT, &sig_handle_exec);
+	while (tokens)
+	{
+		if (tokens->type == COMMAND && tokens->execute)
+		{
+			stat_struct->pid = handle_binary(tokens, env, stat_struct);
+			stat_struct->last_in_fork = true;
+		}
+		else if (tokens->type == BUILTIN && tokens->execute)
+		{
+			if (stat_struct->pipe_count > 0)
+			{
+				stat_struct->pid = builtin_in_fork(tokens, env, stat_struct);
+				stat_struct->last_in_fork = false;
+			}
+			else
+				handle_builtin(tokens, env, stat_struct);
+		}
+		error_code_checks(tokens, stat_struct);
+		tokens = tokens->next;
+	}
+}
+
+void	execute(t_tokens *tokens, t_hash_table *env, t_stat *stat_struct)
+{
+	expand_tokens(&tokens, env, stat_struct->stat);
+	stat_struct->pipe_count = check_pipes(tokens);
+	stat_struct->pipe_fds = allocate_pipe_fds(stat_struct->pipe_count);
+	if (!stat_struct->pipe_fds)
+	{
+		stat_struct->stat = quit_with_error(1, "pipes",
+				"pipe allocation error", 1);
+		return ;
+	}
+	do_redirections(&tokens, env, stat_struct);
+	execute_all(tokens, env, stat_struct);
+	free_pipes(&stat_struct->pipe_fds);
+	if (stat_struct->pipe_count > 0)
+		stat_struct->last_in_fork = true;
+	stat_struct->stat = get_last_stat(stat_struct);
+}
