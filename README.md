@@ -67,11 +67,6 @@ Your shell must:
   - `env` (no options or arguments)  
   - `exit` (no options)  
 
-### Notes
-- The `readline()` function may cause memory leaks — you don’t need to fix them.  
-- Your own code **must not** have memory leaks.  
-- Anything not explicitly required is not needed. Use **Bash** as a reference.  
-
 ---
 
 ## Compilation
